@@ -19,25 +19,17 @@ View and modify calibration data in BIN files using JSON, A2L, XDF definitions (
 
 ## Features
 
-- **Auto-Detection**: Automatically matches binary files to definitions via EPK verification
-- **Multi-Format Support**: A2L, XDF (TunerPro), and JSON definition formats
 - **BIN File Editor**: View and edit scalar values, curves (1D tables), and maps (2D tables)
 - **3D Visualization**: Interactive 3D surface graph for MAP parameters (mouse-draggable rotation/tilt) WebGL
   accelerated
 - **2D Graphs**: Line charts for CURVE parameters
 - **Heatmap Visualization**: Color-coded table cells from green to red
 - **Compare Mode**: Load an original BIN file to compare changes side-by-side
-- **Cross-Compare Mode**: Load a different BIN file to compare changes over two definitions side-by-side
 - **Editable Axes**: Modify X and Y axis breakpoints directly
 - **Batch Editing**: Select multiple cells and apply add/multiply/set operations
 - **Change Tracking**: Visual indicators for modified values with diff view
 - **Category Tree**: Organize parameters by categories with fuzzy search
 - **Keyboard Navigation**: Navigate parameters with arrow keys
-
-## Patching
-
-Built-in support for [Switchleg1/BinToolz](https://github.com/Switchleg1/BinToolz) `.btp` patch files. Compatible
-patches are automatically detected when a binary is loaded.
 
 
 ## Tech Stack
