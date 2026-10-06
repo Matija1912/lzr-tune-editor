@@ -50,7 +50,6 @@ interface Props {
     onSelect: (param: IDefinitionParameter) => void;
     selectedParam: IDefinitionParameter | null;
     originalDiffAddresses?: Set<number>;
-    crossCompareDiffAddresses?: Set<number>;
 }
 
 function countAllParameters(node: TreeNode): number {
@@ -83,15 +82,14 @@ function buildTree(parameters: IDefinitionParameter[], pathPrefix = ''): TreeNod
 }
 
 function TreeNodeView({
-                          node,
-                          depth,
-                          onSelect,
-                          selectedParam,
-                          expanded,
-                          onToggle,
-                          originalDiffAddresses,
-                          crossCompareDiffAddresses,
-                      }: {
+    node,
+    depth,
+    onSelect,
+    selectedParam,
+    expanded,
+    onToggle,
+    originalDiffAddresses,
+}: {
     node: TreeNode;
     depth: number;
     onSelect: (p: IDefinitionParameter) => void;
@@ -99,7 +97,6 @@ function TreeNodeView({
     expanded: Set<string>;
     onToggle: (path: string) => void;
     originalDiffAddresses?: Set<number>;
-    crossCompareDiffAddresses?: Set<number>;
 }) {
     const isExpanded = expanded.has(node.path);
     const hasChildren = node.children.size > 0 || node.parameters.length > 0;
@@ -142,7 +139,6 @@ function TreeNodeView({
                                 expanded={expanded}
                                 onToggle={onToggle}
                                 originalDiffAddresses={originalDiffAddresses}
-                                crossCompareDiffAddresses={crossCompareDiffAddresses}
                             />
                         ))}
 
@@ -153,7 +149,6 @@ function TreeNodeView({
                             const paramId = `${param.address}`;
                             const isSelected = selectedParam?.address === param.address;
                             const showOriginalMarker = originalDiffAddresses?.has(param.address) ?? false;
-                            const showCrossCompareMarker = crossCompareDiffAddresses?.has(param.address) ?? false;
                             return (
                                 <div
                                     key={paramId}
@@ -181,12 +176,6 @@ function TreeNodeView({
                                                     title="Original loaded"
                                                 />
                                             )}
-                                            {showCrossCompareMarker && (
-                                                <span
-                                                    class={`inline-block w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-cyan-200' : 'bg-teal-400'}`}
-                                                    title="Cross-compare loaded"
-                                                />
-                                            )}
                                         </span>
                                     </span>
                                 </div>
@@ -198,7 +187,7 @@ function TreeNodeView({
     );
 }
 
-export function CategoryTree({parameters, onSelect, selectedParam, originalDiffAddresses, crossCompareDiffAddresses}: Props) {
+export function CategoryTree({parameters, onSelect, selectedParam, originalDiffAddresses}: Props) {
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [filter, setFilter] = useState('');
     const [debouncedFilter, setDebouncedFilter] = useState('');
@@ -349,7 +338,6 @@ export function CategoryTree({parameters, onSelect, selectedParam, originalDiffA
                             expanded={expanded}
                             onToggle={toggleNode}
                             originalDiffAddresses={originalDiffAddresses}
-                            crossCompareDiffAddresses={crossCompareDiffAddresses}
                         />
                         <div class="mx-2 my-3 border-t border-zinc-300 dark:border-zinc-700" />
                     </>
@@ -365,7 +353,6 @@ export function CategoryTree({parameters, onSelect, selectedParam, originalDiffA
                     expanded={expanded}
                     onToggle={toggleNode}
                     originalDiffAddresses={originalDiffAddresses}
-                    crossCompareDiffAddresses={crossCompareDiffAddresses}
                 />
             </div>
         </div>

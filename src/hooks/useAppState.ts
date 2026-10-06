@@ -1,53 +1,24 @@
 import {useState, useCallback, useMemo} from 'preact/hooks';
-import {track} from '../lib/track';
 import {DATA_TYPE_INFO, ILoadedBin} from '../types';
-import type {Definition, IDefinitionParameter, BinaryMode, CellDiff, AxisDiff, ParamDiff} from '../types';
-import type {PatchCheckResult} from '../lib/btpParser';
-import {buildBtp} from '../lib/btpParser';
+import type {Definition, IDefinitionParameter, CellDiff, AxisDiff, ParamDiff} from '../types';
 import {
     readParameterValue,
     readTableData,
     readAxisData,
-    addressToOffset,
-    isCalOnly, readBoxCode, readEPK, readVersion,
 } from '../lib/binUtils';
-import {s19ToBinary, isS19File, hexToBinary, isHexFile} from '../lib/s19Parser';
 import type {IAppContext} from '../context/app';
 
-async function parseFileData(file: File): Promise<{ data: Uint8Array; displayName: string }> {
-    let data: Uint8Array;
-    let displayName = file.name;
-
-    if (isS19File(file.name)) {
-        const text = await file.text();
-        data = s19ToBinary(text);
-        displayName = file.name.replace(/\.(s19|srec|mot)$/i, '.bin');
-    } else if (isHexFile(file.name)) {
-        const text = await file.text();
-        data = hexToBinary(text);
-        displayName = file.name.replace(/\.(hex|ihex)$/i, '.bin');
-    } else {
-        const buffer = await file.arrayBuffer();
-        data = new Uint8Array(buffer);
-    }
-
-    return {data, displayName};
-}
-
 export function useAppState(): IAppContext {
+    //Memory state for the application
     const [definition, setDefinition] = useState<Definition | null>(null);
     const [binData, setBinData] = useState<Uint8Array | null>(null);
     const [binFileName, setBinFileName] = useState<string | null>(null);
     const [originalBinData, setOriginalBinData] = useState<Uint8Array | null>(null);
     const [originalBinFileName, setOriginalBinFileName] = useState<string | null>(null);
-    const [crossCompareBin, setCrossCompareBin] = useState<ILoadedBin | null>(null);
     const [selectedParam, setSelectedParam] = useState<IDefinitionParameter | null>(null);
     const [modified, setModified] = useState(false);
     const [modRevision, setModRevision] = useState(0);
-    const [detectedMode, setDetectedMode] = useState<BinaryMode | null>(null);
-    const [calOffset, setCalOffset] = useState<number>(0);
-    const [patchResults, setPatchResults] = useState<PatchCheckResult[]>([]);
-    const [customDefinition, setCustomDefinition] = useState(false);
+    const calOffset = 0;
 
     // Derived
     const bigEndian = definition?.bigEndian ?? false;
@@ -57,7 +28,6 @@ export function useAppState(): IAppContext {
         name: binFileName ?? '',
         data: binData,
         modified,
-        type: detectedMode === 'cal' ? 'CAL' : detectedMode === 'full' ? 'FULL' : undefined,
     } : null;
 
     const originalBin: ILoadedBin | null = originalBinData ? {
@@ -75,142 +45,29 @@ export function useAppState(): IAppContext {
     }, []);
 
     const loadBin = useCallback(async (file: File) => {
-        const {data, displayName} = await parseFileData(file);
-        const fileType = isS19File(file.name) ? 's19' : isHexFile(file.name) ? 'hex' : 'bin';
-
-        const boxCode = readBoxCode(data);
-        const [epk, epkAddress] = readEPK(data);
-        const version = readVersion(data);
-
-        console.log(JSON.stringify(boxCode), boxCode, epk, version)
-
+        const buffer = await file.arrayBuffer();
+        const data = new Uint8Array(buffer);
         setBinData(data);
-        setBinFileName(displayName);
+        setBinFileName(file.name);
         setModified(false);
-        setPatchResults([]);
-        track('Load BIN', {size: data.length, type: fileType, boxCode, epk, version});
-
-        if (definition) {
-            const isCal = isCalOnly(data);
-            // Some DQ250 full binaries place CAL 0x10000/0x30000 bytes earlier.
-            let dsgOffset = epkAddress === 0x3FFE0 ? -0x10000 : 0;
-            dsgOffset = epkAddress === 0x1FFE0 ? -0x30000 : dsgOffset;
-            setDetectedMode(isCal ? 'cal' : 'full');
-            setCalOffset(isCal ? 0 : ((definition.baseAddress ?? 0) + dsgOffset));
-        } else {
-            setDetectedMode(null);
-            setCalOffset(0);
-        }
-    }, [definition]);
+    }, []);
 
     const loadBinData = useCallback((data: Uint8Array, name: string) => {
         setBinData(data);
         setBinFileName(name);
         setModified(false);
-        setPatchResults([]);
-        if (definition) {
-            const isCal = isCalOnly(data);
-            setDetectedMode(isCal ? 'cal' : 'full');
-            setCalOffset(isCal ? 0 : (definition.baseAddress ?? 0));
-        }
-        track('Load BIN', {size: data.length, type: 'ols'});
-    }, [definition]);
+    }, []);
+
 
     const loadOriginalBin = useCallback(async (file: File) => {
         const buffer = await file.arrayBuffer();
         setOriginalBinData(new Uint8Array(buffer));
         setOriginalBinFileName(file.name);
-        track('Load Original');
     }, []);
 
-    const loadCrossCompareBin = useCallback(async (file: File) => {
-        const {data, displayName} = await parseFileData(file);
-        const newBin: ILoadedBin = {
-            name: displayName,
-            data,
-        };
-
-        if (definition) {
-            const isCal = isCalOnly(data);
-            newBin.definition = definition;
-            newBin.calOffset = isCal ? 0 : (definition.baseAddress ?? 0);
-        }
-
-        setCrossCompareBin(newBin);
-        track('Load Cross-Compare', {definition: newBin.definition?.name ?? ''});
-    }, [definition]);
-
-    // Set definition from external source (XDF drop, JSON drop, converter, browser)
-    // Recalculates calOffset based on loaded bin
     const setExternalDefinition = useCallback((def: Definition | null) => {
         setDefinition(def);
-        setCustomDefinition(true);
-        if (!def || !binData) {
-            setCalOffset(0);
-            setDetectedMode(null);
-            return;
-        }
-        const isCal = isCalOnly(binData);
-        setCalOffset(isCal ? 0 : (def.baseAddress ?? 0));
-        setDetectedMode(isCal ? 'cal' : 'full');
-    }, [binData]);
-
-    const loadDefinitionJson = useCallback(async (file: File) => {
-        const text = await file.text();
-        const def = JSON.parse(text) as Definition;
-        setExternalDefinition(def);
-        setSelectedParam(null);
-        track('Load Definition', {name: 'Custom'});
-    }, [setExternalDefinition]);
-
-    const getParamByteRanges = useCallback((): { offset: number; length: number }[] => {
-        if (!definition || !binData) return [];
-        const ranges: { offset: number; length: number }[] = [];
-        const seen = new Set<string>();
-
-        const addRange = (offset: number, length: number) => {
-            if (offset < 0 || offset + length > binData.length) return;
-            const key = `${offset}:${length}`;
-            if (seen.has(key)) return;
-            seen.add(key);
-            ranges.push({offset, length});
-        };
-
-        for (const param of definition.parameters) {
-            const rows = param.rows || 1;
-            const cols = param.cols || 1;
-            const typeSize = DATA_TYPE_INFO[param.dataType].size;
-            const dataOffset = param.dataOffset ?? 0;
-            const fileOffset = addressToOffset(param.address, calOffset) + dataOffset;
-            addRange(fileOffset, rows * cols * typeSize);
-
-            if (param.xAxis?.address) {
-                const axType = DATA_TYPE_INFO[param.xAxis.dataType ?? param.dataType].size;
-                const axDataOffset = param.xAxis.dataOffset ?? 0;
-                const axFileOffset = addressToOffset(param.xAxis.address, calOffset) + axDataOffset;
-                addRange(axFileOffset, param.xAxis.points * axType);
-            }
-            if (param.yAxis?.address) {
-                const axType = DATA_TYPE_INFO[param.yAxis.dataType ?? param.dataType].size;
-                const axDataOffset = param.yAxis.dataOffset ?? 0;
-                const axFileOffset = addressToOffset(param.yAxis.address, calOffset) + axDataOffset;
-                addRange(axFileOffset, param.yAxis.points * axType);
-            }
-        }
-
-        ranges.sort((a, b) => a.offset - b.offset);
-        const merged: { offset: number; length: number }[] = [];
-        for (const r of ranges) {
-            const last = merged[merged.length - 1];
-            if (last && r.offset <= last.offset + last.length) {
-                const end = Math.max(last.offset + last.length, r.offset + r.length);
-                last.length = end - last.offset;
-            } else {
-                merged.push({...r});
-            }
-        }
-        return merged;
-    }, [definition, binData, calOffset]);
+    }, []);
 
     const saveBin = useCallback((filename?: string) => {
         if (!binData || !binFileName) return;
@@ -225,38 +82,7 @@ export function useAppState(): IAppContext {
         URL.revokeObjectURL(url);
 
         setModified(false);
-
-        const exportCount = Number(localStorage.getItem("exportCount") || "0") + 1;
-        localStorage.setItem("exportCount", JSON.stringify(exportCount));
-
-        track('Save BIN', {
-            definition: customDefinition ? 'Custom' : (definition?.name ?? ''),
-            exportCount
-        });
-    }, [binData, binFileName, definition, customDefinition]);
-
-    const exportBtp = useCallback(() => {
-        if (!binData || !originalBinData || !definition) return;
-
-        const ranges = getParamByteRanges();
-        const softCode = (definition.verification?.expected ?? definition.name).slice(0, 8);
-        const btpData = buildBtp(originalBinData, binData, softCode, ranges);
-
-        const blockCount = btpData[28] | (btpData[29] << 8) | (btpData[30] << 16) | ((btpData[31] << 24) >>> 0);
-        if (blockCount === 0) {
-            alert('No changes to export');
-            return;
-        }
-
-        const blob = new Blob([btpData.buffer as ArrayBuffer], {type: 'application/octet-stream'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = (binFileName ?? 'patch').replace(/\.[^.]+$/, '_patch.btp');
-        a.click();
-        URL.revokeObjectURL(url);
-        track('Export BTP', {blocks: blockCount});
-    }, [binData, originalBinData, definition, binFileName, getParamByteRanges]);
+    }, [binData, binFileName]);
 
     // Calculate differences between original and current BIN
     const changes = useMemo((): ParamDiff[] => {
@@ -340,136 +166,24 @@ export function useAppState(): IAppContext {
         return diffs;
     }, [definition, binData, originalBinData, calOffset, modRevision]);
 
-    // Calculate differences between current bin and cross-compare bin
-    const crossCompareDiffs = useMemo((): ParamDiff[] => {
-        if (!definition || !binData || !crossCompareBin?.data || !crossCompareBin.definition) return [];
-
-        const diffs: ParamDiff[] = [];
-        const curBigEndian = definition.bigEndian ?? false;
-        const ccDef = crossCompareBin.definition;
-        const ccCalOffset = crossCompareBin.calOffset ?? 0;
-        const ccBigEndian = ccDef.bigEndian ?? false;
-
-        // Build lookup of cross-compare params by lowercase name
-        const ccParamMap = new Map<string, IDefinitionParameter>();
-        for (const p of ccDef.parameters) {
-            ccParamMap.set(p.name.toLowerCase(), p);
-        }
-
-        for (const param of definition.parameters) {
-            const ccParam = ccParamMap.get(param.name.toLowerCase());
-            if (!ccParam) continue;
-
-            // For tables, dimensions must match
-            if (param.type !== 'VALUE') {
-                if ((ccParam.rows || 1) !== (param.rows || 1) ||
-                    (ccParam.cols || 1) !== (param.cols || 1)) continue;
-            }
-
-            if (param.type === 'VALUE') {
-                const currentValue = readParameterValue(binData, param, calOffset, curBigEndian);
-                const ccValue = readParameterValue(crossCompareBin.data, ccParam, ccCalOffset, ccBigEndian);
-                if (Math.abs(ccValue - currentValue) > 0.0001) {
-                    diffs.push({param, originalValue: ccValue, currentValue});
-                }
-            } else {
-                const currentTable = readTableData(binData, param, calOffset, curBigEndian);
-                const ccTable = readTableData(crossCompareBin.data, ccParam, ccCalOffset, ccBigEndian);
-                const cellDiffs: CellDiff[] = [];
-
-                for (let r = 0; r < currentTable.length; r++) {
-                    for (let c = 0; c < currentTable[r].length; c++) {
-                        if (Math.abs(ccTable[r][c] - currentTable[r][c]) > 0.0001) {
-                            cellDiffs.push({
-                                row: r,
-                                col: c,
-                                original: ccTable[r][c],
-                                current: currentTable[r][c],
-                            });
-                        }
-                    }
-                }
-
-                const axisDiffs: AxisDiff[] = [];
-
-                if (param.xAxis?.address && ccParam.xAxis?.address) {
-                    const currentXAxis = readAxisData(binData, param.xAxis, calOffset, curBigEndian);
-                    const ccXAxis = readAxisData(crossCompareBin.data, ccParam.xAxis, ccCalOffset, ccBigEndian);
-                    if (currentXAxis.length === ccXAxis.length) {
-                        const changedIndices: number[] = [];
-                        for (let i = 0; i < currentXAxis.length; i++) {
-                            if (Math.abs(ccXAxis[i] - currentXAxis[i]) > 0.0001) {
-                                changedIndices.push(i);
-                            }
-                        }
-                        if (changedIndices.length > 0) {
-                            axisDiffs.push({axis: 'x', original: ccXAxis, current: currentXAxis, changedIndices});
-                        }
-                    }
-                }
-
-                if (param.yAxis?.address && ccParam.yAxis?.address) {
-                    const currentYAxis = readAxisData(binData, param.yAxis, calOffset, curBigEndian);
-                    const ccYAxis = readAxisData(crossCompareBin.data, ccParam.yAxis, ccCalOffset, ccBigEndian);
-                    if (currentYAxis.length === ccYAxis.length) {
-                        const changedIndices: number[] = [];
-                        for (let i = 0; i < currentYAxis.length; i++) {
-                            if (Math.abs(ccYAxis[i] - currentYAxis[i]) > 0.0001) {
-                                changedIndices.push(i);
-                            }
-                        }
-                        if (changedIndices.length > 0) {
-                            axisDiffs.push({axis: 'y', original: ccYAxis, current: currentYAxis, changedIndices});
-                        }
-                    }
-                }
-
-                if (cellDiffs.length > 0 || axisDiffs.length > 0) {
-                    const xAxis = param.xAxis ? readAxisData(binData, param.xAxis, calOffset, curBigEndian) : undefined;
-                    const yAxis = param.yAxis ? readAxisData(binData, param.yAxis, calOffset, curBigEndian) : undefined;
-
-                    diffs.push({
-                        param,
-                        originalValue: ccTable,
-                        currentValue: currentTable,
-                        cellDiffs,
-                        axisDiffs,
-                        xAxis,
-                        yAxis,
-                    });
-                }
-            }
-        }
-
-        return diffs;
-    }, [definition, binData, crossCompareBin, calOffset, modRevision]);
-
     return {
         bin,
         originalBin,
-        crossCompareBin,
         definition,
         selectedParam,
         calOffset,
-        detectedMode,
         bigEndian,
         modified,
-        patchResults,
         changes,
-        crossCompareDiffs,
         loadBin,
         loadBinData,
         loadOriginalBin,
-        loadCrossCompareBin,
         saveBin,
         binFileName,
-        exportBtp,
         markModified,
         markSaved,
-        loadDefinitionJson,
         setDefinition,
         setExternalDefinition,
         setSelectedParam,
-        setPatchResults,
     };
 }

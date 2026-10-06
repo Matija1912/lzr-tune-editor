@@ -1,29 +1,6 @@
 import {useState, useEffect, useMemo, useRef, useCallback} from 'preact/hooks';
-import type {ComponentChildren} from 'preact';
-import {track} from '../lib/track';
 import type {IDefinitionParameter} from '../types';
-import {LogOverlay} from './LogOverlay';
-import {useLogContext} from '../context/log';
-import {resolveParamValues, fractionalIndex} from '../lib/logMapping';
-import {interpolateRow} from '../lib/csvLog';
-
-// Isolates the live log-cursor subscription so the heavy ValueEditor body does
-// not re-render on every playback tick. Only this leaf re-renders, then passes
-// the resolved (x, y) marker into its children render-prop.
-function LiveLogMarker({param, children}: {
-    param: IDefinitionParameter;
-    children: (marker: {x: number | null; y: number | null}) => ComponentChildren;
-}) {
-    const {log: liveLog, index: liveIndex} = useLogContext();
-    const marker = useMemo(() => {
-        if (!liveLog || liveLog.rows.length === 0) return {x: null, y: null};
-        const row = interpolateRow(liveLog.rows, liveIndex);
-        if (!row) return {x: null, y: null};
-        const {x, y} = resolveParamValues(param, liveLog.headers, row);
-        return {x, y};
-    }, [liveLog, liveIndex, param]);
-    return <>{children(marker)}</>;
-}
+import {fractionalIndex} from '../lib/logMapping';
 import {
     formatValue,
     getConsistentDecimals,
@@ -65,20 +42,7 @@ interface IValueEditorProps {
 
 export function ValueEditor(props: IValueEditorProps) {
     const {param} = props;
-    const tracked = useRef(false);
-
-    useEffect(() => {
-        tracked.current = false;
-    }, [param.name]);
-
-    const trackEdit = useCallback(() => {
-        if (!tracked.current) {
-            tracked.current = true;
-            const type = param.type === 'VALUE' ? 'Scalar' : param.type === 'CURVE' ? '1D' : '2D';
-            track('Edit Parameter', {type, name: param.name});
-        }
-    }, [param.type, param.name]);
-
+    const trackEdit = useCallback(() => {}, []);
     if (param.type === 'VALUE' && props.scalar) {
         return <ScalarEditor {...props} scalar={props.scalar} trackEdit={trackEdit}/>;
     }
@@ -162,7 +126,9 @@ function ScalarEditor({
                         <h2 class="text-lg font-semibold">
                             {param.customName || param.description || param.name}
                         </h2>
-                        <code class="text-xs text-zinc-500">{param.name}</code>
+                        {(param.customName || param.description) && (
+                            <code class="text-xs text-zinc-500">{param.name}</code>
+                        )}
                     </div>
                     {(originalValue !== null || compareValue !== null) && (
                         <div class="flex gap-x-2">
@@ -171,7 +137,6 @@ function ScalarEditor({
                                     onClick={() => {
                                         onRevert();
                                         setValue(originalValue!);
-                                        track('Revert Parameter', {type: 'Scalar', name: param.name});
                                     }}
                                     class="px-3 py-1.5 text-sm rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600"
                                 >
@@ -203,12 +168,18 @@ function ScalarEditor({
                 </div>
 
                 <div
-                    class="flex gap-4 p-3 bg-zinc-200 dark:bg-zinc-800 rounded text-xs text-zinc-600 dark:text-zinc-400">
-                    <span>Type: {param.dataType}</span>
-                    <span>Unit: {param.unit || '-'}</span>
-                    <span>Range: {param.min} - {param.max}</span>
-                </div>
+                class="flex gap-4 p-3 bg-zinc-200 dark:bg-zinc-800 rounded text-xs text-zinc-600 dark:text-zinc-400">
+                <span>Type: {param.dataType}</span>
+                <span>Unit: {param.unit || '-'}</span>
+                <span>Range: {param.min} - {param.max}</span>
             </div>
+
+            {param.metaDescription && (
+                <div class="mt-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/30 border-l-2 border-blue-400 dark:border-blue-500 rounded-r text-sm text-zinc-700 dark:text-zinc-300">
+                    {param.metaDescription}
+                </div>
+            )}
+        </div>
 
             {isEnum ? (() => {
                 const enumLabels = param.enumLabels!;
@@ -1609,6 +1580,16 @@ function TableEditor({
         setTableData(table.cells);
         setXAxisData(table.xAxis);
         setYAxisData(table.yAxis);
+        setEditCell(null);
+        setEditAxisCell(null);
+        setInputValue('');
+        setSelection(null);
+        setIsSelecting(false);
+        setSelectionAnchor(null);
+        setAxisSelection(null);
+        setIsAxisSelecting(false);
+        setAxisSelectionAnchor(null);
+        setShowModifyInput(null);
     }, [table.cells, table.xAxis, table.yAxis]);
 
     const hasChanged = useMemo(() => {
@@ -2084,9 +2065,11 @@ function TableEditor({
                 <div class="flex items-start justify-between mb-4">
                     <div>
                         <h2 class="text-lg font-semibold">
-                            {param.customName || param.description || param.name}
-                        </h2>
+                        {param.customName || param.description || param.name}
+                    </h2>
+                    {(param.customName || param.description) && (
                         <code class="text-xs text-zinc-500">{param.name}</code>
+                    )}
                     </div>
                     <div class="flex gap-x-2">
                         {hasChanged && onRevert &&
@@ -2097,8 +2080,6 @@ function TableEditor({
                                     if (originalTableData) setTableData(originalTableData.map(row => [...row]));
                                     if (originalXAxis) setXAxisData([...originalXAxis]);
                                     if (originalYAxis) setYAxisData([...originalYAxis]);
-                                    const type = param.type === 'CURVE' ? '1D' : '2D';
-                                    track('Revert Parameter', {type, name: param.name});
                                 }}>
                                 Revert
                             </button>}
@@ -2124,6 +2105,12 @@ function TableEditor({
                         )}
                     </div>
                 </div>
+
+                {param.metaDescription && (
+                    <div class="mb-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/30 border-l-2 border-blue-400 dark:border-blue-500 rounded-r text-sm text-zinc-700 dark:text-zinc-300">
+                        {param.metaDescription}
+                    </div>
+                )}
 
                 <div
                     ref={toolbarRef}
@@ -2398,57 +2385,45 @@ function TableEditor({
                     ))}
                     </tbody>
                 </table>
-                <LogOverlay param={param} xAxisData={xAxisData} yAxisData={yAxisData}/>
                 </div>
             </div>
 
             {/* 2D Graph for CURVE type */}
             {param.type === 'CURVE' && tableData.length > 0 && tableData[0] && (
-                <LiveLogMarker param={param}>
-                    {(marker) => (
-                        <CurveGraph
-                            xData={xAxisData.length > 0 ? xAxisData : Array.from({length: tableData[0].length}, (_, i) => i)}
-                            yData={tableData[0]}
-                            originalYData={originalTableData ? originalTableData[0] : null}
-                            originalXData={originalXAxis}
-                            compareYData={compareTableData ? compareTableData[0] : null}
-                            compareXData={compareXAxis}
-                            xUnit={param.xAxis?.unit || 'X'}
-                            yUnit={param.unit || 'Y'}
-                            onPointChange={handleCurvePointPreview}
-                            onPointCommit={handleCurvePointCommit}
-                            logX={marker.x}
-                        />
-                    )}
-                </LiveLogMarker>
+                <CurveGraph
+                    xData={xAxisData.length > 0 ? xAxisData : Array.from({length: tableData[0].length}, (_, i) => i)}
+                    yData={tableData[0]}
+                    originalYData={originalTableData ? originalTableData[0] : null}
+                    originalXData={originalXAxis}
+                    compareYData={compareTableData ? compareTableData[0] : null}
+                    compareXData={compareXAxis}
+                    xUnit={param.xAxis?.unit || 'X'}
+                    yUnit={param.unit || 'Y'}
+                    onPointChange={handleCurvePointPreview}
+                    onPointCommit={handleCurvePointCommit}
+                />
             )}
 
             {/* 3D Graph for MAP type */}
             {param.type === 'MAP' && tableData.length > 0 && tableData[0] && (
-                <LiveLogMarker param={param}>
-                    {(marker) => (
-                        <SurfaceGraph
-                            xData={xAxisData.length > 0 ? xAxisData : Array.from({length: tableData[0].length}, (_, i) => i)}
-                            yData={yAxisData.length > 0 ? yAxisData : Array.from({length: tableData.length}, (_, i) => i)}
-                            zData={tableData}
-                            originalZData={originalTableData}
-                            originalXData={originalXAxis}
-                            originalYData={originalYAxis}
-                            compareZData={compareTableData}
-                            compareXData={compareXAxis}
-                            compareYData={compareYAxis}
-                            xUnit={param.xAxis?.unit || 'X'}
-                            yUnit={param.yAxis?.unit || 'Y'}
-                            zUnit={param.unit || 'Z'}
-                            onPointChange={handleSurfacePointPreview}
-                            onPointCommit={handleSurfacePointCommit}
-                            onPointHover={(row, col) => setHoveredSurfacePoint({row, col})}
-                            onPointLeave={() => setHoveredSurfacePoint(null)}
-                            logX={marker.x}
-                            logY={marker.y}
-                        />
-                    )}
-                </LiveLogMarker>
+                <SurfaceGraph
+                    xData={xAxisData.length > 0 ? xAxisData : Array.from({length: tableData[0].length}, (_, i) => i)}
+                    yData={yAxisData.length > 0 ? yAxisData : Array.from({length: tableData.length}, (_, i) => i)}
+                    zData={tableData}
+                    originalZData={originalTableData}
+                    originalXData={originalXAxis}
+                    originalYData={originalYAxis}
+                    compareZData={compareTableData}
+                    compareXData={compareXAxis}
+                    compareYData={compareYAxis}
+                    xUnit={param.xAxis?.unit || 'X'}
+                    yUnit={param.yAxis?.unit || 'Y'}
+                    zUnit={param.unit || 'Z'}
+                    onPointChange={handleSurfacePointPreview}
+                    onPointCommit={handleSurfacePointCommit}
+                    onPointHover={(row, col) => setHoveredSurfacePoint({row, col})}
+                    onPointLeave={() => setHoveredSurfacePoint(null)}
+                />
             )}
         </div>
     );

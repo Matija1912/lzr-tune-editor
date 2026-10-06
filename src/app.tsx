@@ -1,70 +1,27 @@
-import {useState, useCallback, useMemo, useEffect} from 'preact/hooks';
+import {useState, useCallback, useEffect} from 'preact/hooks';
 import type {Definition} from './types';
-import {track} from './lib/track';
-import {FileLoader} from './components/FileLoader';
 import {XdfLoader} from './components/XdfLoader';
-import {LogViewer} from './components/LogViewer';
 import {Modal} from './components/Modal';
-import {PatchManager} from './components/PatchManager';
-import {parseEcuInfo, getCalFileOffset} from './lib/btpParser';
 import {MenuBar} from './components/MenuBar';
 import {Sidebar} from './components/Sidebar';
 import {MainArea} from './components/MainArea';
 import {ChangesModal} from './components/ChangesModal';
-import {CrossCompareModal} from './components/CrossCompareModal';
 import {AppContext} from './context/app';
-import {LogContext} from './context/log';
 import {useAppState} from './hooks/useAppState';
-import {useLogState} from './hooks/useLogState';
-import {parseCSV} from './lib/csvLog';
-import {LogTimeline} from './components/LogTimeline';
-import {isS19File, isHexFile} from './lib/s19Parser';
 import {XDFParser} from './lib/xdfParser';
-import {parseOLS, extractBinary, olsToDefinition} from './lib/olsParser';
-import type {OLSFile, OLSBinaryVersion} from './lib/olsParser';
-import {OLSPickerModal} from './components/OLSPickerModal';
-import {DeprecationModal} from './components/DeprecationModal.tsx';
 import './app.css';
 
 const BIN_EXTENSIONS = ['.bin', '.ori', '.mod'];
 
-function classifyFile(name: string): 'json' | 'bin' | 'csv' | 'xdf' | 'ols' | null {
+function classifyFile(name: string): 'bin' | 'xdf' | null {
     const lower = name.toLowerCase();
-    if (lower.endsWith('.json')) return 'json';
     if (lower.endsWith('.xdf')) return 'xdf';
-    if (lower.endsWith('.csv')) return 'csv';
-    if (lower.endsWith('.ols')) return 'ols';
     if (BIN_EXTENSIONS.some(ext => lower.endsWith(ext))) return 'bin';
-    if (isS19File(name) || isHexFile(name)) return 'bin';
     return null;
 }
 
 export function App() {
     const appState = useAppState();
-    const logState = useLogState();
-
-    // Load log from URL parameter ?log=<id>
-    useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const logId = params.get('log');
-        if (!logId) {
-            return;
-        }
-        fetch(`https://simos.app/api/files/download?id=${encodeURIComponent(logId)}`)
-            .then(res => {
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                return res.text();
-            })
-            .then(text => {
-                setLogViewerData(text);
-                setShowLogViewer(true);
-                logState.setLog(parseCSV(text), `log:${logId}`);
-                track('Load Log URL', {id: logId, size: text.length});
-            })
-            .catch(err => console.error('Failed to load log:', err));
-    }, []);
 
     // Warn before closing with unsaved changes
     useEffect(() => {
@@ -77,22 +34,13 @@ export function App() {
         return () => window.removeEventListener('beforeunload', handler);
     }, [appState.modified]);
 
-    // Modal visibility flags
-    const [showA2lLoader, setShowA2lLoader] = useState(false);
     const [showXdfLoader, setShowXdfLoader] = useState(false);
-    const [showLogViewer, setShowLogViewer] = useState(false);
     const [showChanges, setShowChanges] = useState(false);
-    const [showCrossCompare, setShowCrossCompare] = useState(false);
-    const [showPatchManager, setShowPatchManager] = useState(false);
-    const [logViewerData, setLogViewerData] = useState<string | null>(null);
-    const [olsData, setOlsData] = useState<{ ols: OLSFile, buffer: ArrayBuffer } | null>(null);
 
     const handleDefinitionLoad = useCallback((def: Definition) => {
         appState.setExternalDefinition(def);
         appState.setSelectedParam(null);
-        setShowA2lLoader(false);
         setShowXdfLoader(false);
-        track('Load Definition', {name: 'Custom'});
     }, [appState]);
 
     // Global drag & drop — routes by file type
@@ -102,36 +50,14 @@ export function App() {
         if (!file) return;
 
         const type = classifyFile(file.name);
-        if (type === 'json') {
-            await appState.loadDefinitionJson(file);
-        } else if (type === 'xdf') {
+        if (type === 'xdf') {
             const parser = new XDFParser();
             await parser.parseXDF(file);
             const def = parser.generateDefinition();
-            console.log(`XDF: ${def.parameters.length} parameters from ${file.name}`);
             appState.setExternalDefinition(def);
             appState.setSelectedParam(null);
         } else if (type === 'bin') {
             await appState.loadBin(file);
-        } else if (type === 'ols') {
-            const buffer = await file.arrayBuffer();
-            try {
-                const ols = parseOLS(buffer, file.name);
-                console.log(`OLS: ${ols.parameters.length} parameters, ${ols.binaryVersions.length} binaries from ${file.name}`);
-                setOlsData({ols, buffer});
-                track('Load OLS', {params: ols.parameters.length, bins: ols.binaryVersions.length});
-            } catch (err) {
-                console.error('Failed to parse OLS:', err);
-            }
-        } else if (type === 'csv') {
-            const text = await file.text();
-            const firstHeader = text.split('\n')[0] ?? '';
-            const pids = firstHeader.split(',').filter(s => s.trim()).length;
-            track('Load Log File', {count: text.length, pids});
-
-            logState.setLog(parseCSV(text), file.name);
-            setLogViewerData(text);
-            setShowLogViewer(true);
         }
     }, [appState]);
 
@@ -139,123 +65,32 @@ export function App() {
         e.preventDefault();
     }, []);
 
-    const handleOLSSelect = useCallback((version: OLSBinaryVersion | null) => {
-        if (!olsData) return;
-        const def = olsToDefinition(olsData.ols);
-        appState.setExternalDefinition(def);
-        appState.setSelectedParam(null);
-
-        if (version) {
-            // Extract and load the selected binary
-            const binData = extractBinary(olsData.buffer, version);
-            appState.loadBinData(binData, version.name || 'ols_binary.bin');
-        }
-
-        setOlsData(null);
-        track('Load OLS Definition', {name: def.name, withBin: !!version});
-    }, [olsData, appState]);
-
-    // CAL file offset for block-aware patch checking
-    const calFileOffset = useMemo(() => {
-        const epk = appState.definition?.verification?.expected;
-        const info = epk ? parseEcuInfo(epk) : null;
-        return info ? getCalFileOffset(info.ecuFamily) : null;
-    }, [appState.definition]);
-
     return (
         <AppContext.Provider value={appState}>
-            <LogContext.Provider value={logState}>
             <div
                 class="flex flex-col h-screen bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                 onDragOver={preventDefaults}
                 onDrop={handleGlobalDrop}
             >
                 <MenuBar
-                    onShowA2lLoader={() => setShowA2lLoader(true)}
                     onShowXdfLoader={() => setShowXdfLoader(true)}
-                    onShowLogViewer={() => {
-                        setShowLogViewer(true);
-                        track('Open Log Viewer');
-                    }}
-                    onOpenOLS={async (file) => {
-                        const buffer = await file.arrayBuffer();
-                        try {
-                            const ols = parseOLS(buffer, file.name);
-                            console.log(`OLS: ${ols.parameters.length} parameters, ${ols.binaryVersions.length} binaries from ${file.name}`);
-                            setOlsData({ols, buffer});
-                            track('Load OLS', {params: ols.parameters.length, bins: ols.binaryVersions.length});
-                        } catch (err) {
-                            console.error('Failed to parse OLS:', err);
-                        }
-                    }}
-                    onShowPatchManager={() => setShowPatchManager(true)}
                     onShowChanges={() => setShowChanges(true)}
-                    onShowCrossCompare={() => setShowCrossCompare(true)}
                 />
                 <div class="flex flex-1 overflow-hidden">
                     <Sidebar/>
                     <MainArea/>
                 </div>
-                {appState.bin && logState.log && <LogTimeline/>}
 
-                {/* A2L definition loader */}
-                {showA2lLoader && (
-                    <Modal title="Load A2L definition" onClose={() => setShowA2lLoader(false)} width="lg">
-                        <FileLoader onDefinitionLoad={handleDefinitionLoad}/>
-                    </Modal>
-                )}
-
-                {/* XDF definition loader */}
                 {showXdfLoader && (
                     <Modal title="Load XDF definition" onClose={() => setShowXdfLoader(false)} width="lg">
                         <XdfLoader onDefinitionLoad={handleDefinitionLoad}/>
                     </Modal>
                 )}
 
-                {/* Log Viewer Modal */}
-                {showLogViewer && (
-                    <LogViewer
-                        onClose={() => {
-                            setShowLogViewer(false);
-                            setLogViewerData(null);
-                        }}
-                        initialData={logViewerData}
-                    />
-                )}
-
-                {/* Changes Modal */}
                 {showChanges && (
                     <ChangesModal onClose={() => setShowChanges(false)}/>
                 )}
-
-                {/* Cross-Compare Modal */}
-                {showCrossCompare && (
-                    <CrossCompareModal onClose={() => setShowCrossCompare(false)}/>
-                )}
-
-                {/* Manual BTP patch manager */}
-                {showPatchManager && appState.bin && (
-                    <PatchManager
-                        binData={appState.bin.data}
-                        patchResults={appState.patchResults}
-                        calFileOffset={calFileOffset}
-                        onClose={() => setShowPatchManager(false)}
-                        onModify={appState.markModified}
-                        onPatchResultsChange={appState.setPatchResults}
-                    />
-                )}
-                {/* OLS Picker Modal */}
-                {olsData && (
-                    <OLSPickerModal
-                        ols={olsData.ols}
-                        onSelect={handleOLSSelect}
-                        onClose={() => setOlsData(null)}
-                    />
-                )}
-                {/* Shown once per browser session. */}
-                <DeprecationModal/>
             </div>
-            </LogContext.Provider>
         </AppContext.Provider>
     );
 }

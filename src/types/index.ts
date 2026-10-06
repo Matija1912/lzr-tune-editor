@@ -56,6 +56,7 @@ export interface IDefinitionParameter {
     dataOffset?: number; // Byte offset where table data starts (for STD_AXIS)
     categories: string[];
     customName?: string;
+    metaDescription?: string;  // our own LZRMETA/description field, not the standard XDF <description>
     bitLabels?: Record<string, string>;  // bit index → label, e.g. {"0": "MIS", "3": "CAT"}
     enumLabels?: Record<string, string>;  // value → label, e.g. {"0": "Off", "1": "Resume", "2": "Variable"}
 }

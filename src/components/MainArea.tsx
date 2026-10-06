@@ -69,42 +69,23 @@ function readTable(
 export function MainArea() {
     const ctx = useAppContext();
 
-    // Find matching cross-compare param
-    const ccInfo = useMemo(() => {
-        if (!ctx.crossCompareBin?.definition || !ctx.selectedParam) return null;
-        const ccDef = ctx.crossCompareBin.definition;
-        const selectedName = ctx.selectedParam.name.toLowerCase();
-        const ccParam = ccDef.parameters.find(p => p.name.toLowerCase() === selectedName);
-        if (!ccParam) return null;
-        if (ctx.selectedParam.type !== 'VALUE') {
-            if ((ccParam.rows || 1) !== (ctx.selectedParam.rows || 1) ||
-                (ccParam.cols || 1) !== (ctx.selectedParam.cols || 1)) return null;
-        }
-        return {
-            data: ctx.crossCompareBin.data,
-            param: ccParam,
-            calOffset: ctx.crossCompareBin.calOffset ?? 0,
-            bigEndian: ccDef.bigEndian ?? false,
-        };
-    }, [ctx.crossCompareBin, ctx.selectedParam]);
-
     const scalarData = useMemo(() => {
         if (!ctx.bin || !ctx.selectedParam || ctx.selectedParam.type !== 'VALUE') return undefined;
         return readScalar(
             ctx.bin.data, ctx.selectedParam, ctx.calOffset, ctx.bigEndian,
             ctx.originalBin?.data,
-            ccInfo?.data ?? null, ccInfo?.param ?? null, ccInfo?.calOffset ?? 0, ccInfo?.bigEndian ?? false,
+            null, null, 0, false,
         );
-    }, [ctx.bin, ctx.selectedParam, ctx.calOffset, ctx.bigEndian, ctx.originalBin, ccInfo]);
+    }, [ctx.bin, ctx.selectedParam, ctx.calOffset, ctx.bigEndian, ctx.originalBin]);
 
     const tableData = useMemo(() => {
         if (!ctx.bin || !ctx.selectedParam || ctx.selectedParam.type === 'VALUE') return undefined;
         return readTable(
             ctx.bin.data, ctx.selectedParam, ctx.calOffset, ctx.bigEndian,
             ctx.originalBin?.data,
-            ccInfo?.data ?? null, ccInfo?.param ?? null, ccInfo?.calOffset ?? 0, ccInfo?.bigEndian ?? false,
+            null, null, 0, false,
         );
-    }, [ctx.bin, ctx.selectedParam, ctx.calOffset, ctx.bigEndian, ctx.originalBin, ccInfo]);
+    }, [ctx.bin, ctx.selectedParam, ctx.calOffset, ctx.bigEndian, ctx.originalBin]);
 
     const handleScalarChange = useCallback((value: number) => {
         if (!ctx.bin || !ctx.selectedParam) return;
@@ -188,12 +169,12 @@ export function MainArea() {
                 <label
                     className="flex justify-center items-center h-full text-zinc-500 cursor-pointer hover:bg-zinc-200/30 dark:hover:bg-zinc-700/30 transition-colors">
                     <div className="text-center">
-                        <p>Click or drop BIN/S19/HEX file</p>
-                        <p className="text-xs mt-1">or use File → Open BIN/S19/HEX</p>
+                        <p>Click or drop BIN file</p>
+                        <p className="text-xs mt-1">or use File → Open BIN</p>
                     </div>
                     <input
                         type="file"
-                        accept=".bin,.ori,.mod,.s19,.srec,.mot,.hex,.ihex"
+                        accept=".bin,.ori,.mod"
                         onChange={async (e) => {
                             const file = (e.target as HTMLInputElement).files?.[0];
                             if (!file) return;

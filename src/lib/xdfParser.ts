@@ -93,6 +93,12 @@ function parseInteger(value: string | null, fallback: number): number {
     return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function parseNum(s: string): number {
+    s = s.trim();
+    if (/^0[xX]/.test(s)) return parseInt(s, 16);
+    return fixFloat(s);
+}
+
 function parseMathEquation(equation: string): { factor: number; offset: number; formula?: RationalFormula } {
     equation = equation.trim();
 
@@ -114,6 +120,54 @@ function parseMathEquation(equation: string): { factor: number; offset: number; 
         if (d === 0 && c !== 0) return {factor: a / c, offset: b / c};
         // Non-linear: return formula
         return {factor: 1, offset: 0, formula: {a, b, c, d}};
+    }
+
+    // (X +/- B) * A / C  — e.g. "(X-128)*100/255"
+    const parenMulDiv = equation.match(
+        new RegExp(`^\\(\\s*X\\s*([+-])\\s*(${NUM})\\s*\\)\\s*\\*\\s*(${NUM})\\s*/\\s*(${NUM})$`, 'i')
+    );
+    if (parenMulDiv) {
+        const sign = parenMulDiv[1] === '-' ? -1 : 1;
+        const b = fixFloat(parenMulDiv[2]);
+        const a = fixFloat(parenMulDiv[3]);
+        const c = fixFloat(parenMulDiv[4]);
+        const factor = a / c;
+        return {factor, offset: sign * b * factor};
+    }
+
+    // (X +/- B) * A  — e.g. "(X-64)*0.5"
+    const parenMul = equation.match(
+        new RegExp(`^\\(\\s*X\\s*([+-])\\s*(${NUM})\\s*\\)\\s*\\*\\s*(${NUM})$`, 'i')
+    );
+    if (parenMul) {
+        const sign = parenMul[1] === '-' ? -1 : 1;
+        const b = fixFloat(parenMul[2]);
+        const a = fixFloat(parenMul[3]);
+        return {factor: a, offset: sign * b * a};
+    }
+
+    // (X * A) +/- B  — e.g. "(X*0.00390625)+0.5"
+    const parenMulOff = equation.match(new RegExp(`^\\(\\s*X\\s*\\*\\s*(${NUM})\\s*\\)\\s*([+-])\\s*(${NUM})$`, 'i'));
+    if (parenMulOff) {
+        const f = fixFloat(parenMulOff[1]);
+        const o = fixFloat(parenMulOff[3]) * (parenMulOff[2] === '-' ? -1 : 1);
+        return {factor: f, offset: o};
+    }
+
+    // X * A / B  — e.g. "X*100/255"
+    const mulDiv = equation.match(new RegExp(`^X\\s*\\*\\s*(${NUM})\\s*/\\s*(${NUM})$`, 'i'));
+    if (mulDiv) return {factor: fixFloat(mulDiv[1]) / fixFloat(mulDiv[2]), offset: 0};
+
+    // X / A * B  — e.g. "X/255*100", "X/0xFFFF*100"
+    const divMul = equation.match(new RegExp(`^X\\s*/\\s*([0-9a-fA-FxX.\\-+eE]+)\\s*\\*\\s*(${NUM})$`, 'i'));
+    if (divMul) return {factor: fixFloat(divMul[2]) / parseNum(divMul[1]), offset: 0};
+
+    // X / A + B  — e.g. "X/256+0.5"
+    const divAdd = equation.match(new RegExp(`^X\\s*/\\s*(${NUM})\\s*([+-])\\s*(${NUM})$`, 'i'));
+    if (divAdd) {
+        const a = fixFloat(divAdd[1]);
+        const b = fixFloat(divAdd[3]) * (divAdd[2] === '-' ? -1 : 1);
+        return {factor: 1 / a, offset: b};
     }
 
     // X / divisor
@@ -376,8 +430,9 @@ export class XDFParser {
         const flags = parseInt(element.getAttribute('flags') || '0', 16);
         const columnDir = (flags & 0x20) !== 0;
 
-        const title = element.querySelector('title')?.textContent || '';
-        const xdfDesc = element.querySelector('description')?.textContent || '';
+        const title = element.querySelector(':scope > title')?.textContent || '';
+        const xdfDesc = element.querySelector(':scope > description')?.textContent || '';
+        const metaDescription = element.querySelector(':scope > LZRMETA > description')?.textContent?.trim() || undefined;
 
         // Detect A2L-generated XDFs: description first line is A2L ID
         const descLines = xdfDesc.split(/[\r\n]+/);
@@ -391,7 +446,7 @@ export class XDFParser {
             description = title !== firstLine ? title : '';
         } else {
             name = title;
-            description = xdfDesc && xdfDesc !== title ? `${title} — ${xdfDesc}` : title;
+            description = xdfDesc && xdfDesc !== title ? xdfDesc : '';
         }
 
         // Parse axes
@@ -431,6 +486,7 @@ export class XDFParser {
             max: zAxisData.max,
             factor: zAxisData.factor,
             offset: zAxisData.offset,
+            metaDescription,
             categories: categories.length > 0 ? categories : ['Uncategorized'],
         };
 
@@ -488,8 +544,9 @@ export class XDFParser {
     }
 
     private parseConstant(element: Element): IDefinitionParameter | null {
-        const title = element.querySelector('title')?.textContent || '';
-        const xdfDesc = element.querySelector('description')?.textContent || '';
+        const title = element.querySelector(':scope > title')?.textContent || '';
+        const xdfDesc = element.querySelector(':scope > description')?.textContent || '';
+        const metaDescription = element.querySelector(':scope > LZRMETA > description')?.textContent?.trim() || undefined;
         const {id, description: extractedDescription} = extractXdfIdentity(title, xdfDesc);
         const name = title.trim() || id;
         if (!name) return null;
@@ -528,6 +585,7 @@ export class XDFParser {
             type: 'VALUE',
             dataType,
             unit, min, max, factor, offset, formula,
+            metaDescription,
             categories: categories.length > 0 ? categories : ['Uncategorized'],
         };
     }
